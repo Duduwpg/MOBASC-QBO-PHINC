@@ -1,5 +1,5 @@
 // Offline support: network first (so updates arrive), cache as the fallback when offline.
-const CACHE = "inv-count-2026-10-26.3";
+const CACHE = "inv-count-2026-10-26.4";
 const SHELL = [
   "./", "index.html", "style.css", "manifest.webmanifest", "icon.svg",
   "js/app.js", "js/codes.js", "js/csv.js", "js/sheet.js",

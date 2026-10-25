@@ -4,7 +4,7 @@
 import { readCode } from "./codes.js";
 import { readWorksheet, buildExport, lotText, fmt, round } from "./sheet.js";
 
-const VERSION = "2026-10-26.3";
+const VERSION = "2026-10-26.4";
 const STATE_KEY = "invCount.state.v1";
 const CODES_KEY = "invCount.codes.v1";
 const SAME_CODE_GAP_MS = 1200;   // the same code must leave the view this long to count again

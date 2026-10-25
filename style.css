@@ -108,6 +108,7 @@ code { font-size: .9em; }
 .card-lots .expired { color: var(--danger); font-weight: 700; }
 
 .chips { display: flex; gap: 6px; overflow-x: auto; margin: 10px 0 4px; padding-bottom: 2px; }
+.chips.wrap { flex-wrap: wrap; overflow-x: visible; }
 .chip { flex: 0 0 auto; border: 1px solid var(--line); background: var(--chip); color: var(--text); font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 999px; min-height: 40px; }
 .chip.on { background: var(--brand); color: #fff; border-color: var(--brand); }
 .chip b { font-weight: 700; margin-left: 2px; }

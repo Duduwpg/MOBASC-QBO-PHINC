@@ -4,7 +4,7 @@
 import { readCode } from "./codes.js";
 import { readWorksheet, buildExport, lotText, fmt, round } from "./sheet.js";
 
-const VERSION = "2026-10-26.4";
+const VERSION = "2026-10-26.6";
 const STATE_KEY = "invCount.state.v1";
 const CODES_KEY = "invCount.codes.v1";
 const SAME_CODE_GAP_MS = 1200;   // the same code must leave the view this long to count again
@@ -28,7 +28,7 @@ function save(key, value) {
 }
 
 const state = Object.assign({
-  counter: "", deviceId: "", sound: true, pack: null, counts: {}, others: [], log: [],
+  counter: "", deviceId: "", sound: true, askQty: false, pack: null, counts: {}, others: [], log: [],
 }, load(STATE_KEY, {}));
 if (!state.deviceId) state.deviceId = Math.random().toString(36).slice(2, 10);
 let codes = load(CODES_KEY, {});
@@ -199,7 +199,10 @@ function grabFrame(video) {
 
 async function loop() {
   if (!scanning) return;
-  if (!busy && !document.querySelector("dialog[open]")) {
+  // While a dialog is open, treat the last code as still in view: when the dialog closes, a
+  // barcode still in front of the camera must leave the view before it counts again.
+  if (document.querySelector("dialog[open]")) seen.at = Date.now();
+  else if (!busy) {
     busy = true;
     try {
       const frame = grabFrame($("video"));
@@ -226,13 +229,29 @@ function onCode(code, format) {
   countScan(it, code);
 }
 
-function countScan(it, code) {
+// Normally a scan counts 1. With "Ask how many on each scan" on, it asks for the number of
+// that item in front of the counter and adds it (a stack of 6 boxes = one scan + "6").
+async function countScan(it, code) {
   const lot = code.lot || code.expiry ? `${code.lot}|${code.expiry}` : "";
-  change(it.key, 1, lot);
+  let n = 1;
+  if (state.askQty) {
+    feedback(it.retired ? "retired" : "ok");
+    showCard(it, true);
+    const so = mine(it.key)?.q;
+    const v = await ask(it.name,
+      `${howToCount(it) ? howToCount(it) + " " : ""}How many here? This is added to the count` +
+      (so ? ` (counted so far: ${fmt(so)}).` : "."), "1", true);
+    if (v == null || v === "") { toast("Not counted."); return; }
+    n = Number(v.replace(",", "."));
+    if (!Number.isFinite(n) || n < 0) { toast("That is not a number. Not counted."); return; }
+    if (n === 0) { toast("Nothing added."); return; }
+  }
+  change(it.key, n, lot);
   lastScan = { code, itemKey: it.key };
   showCard(it, true);
   render();
-  feedback(it.retired ? "retired" : "ok");
+  if (!state.askQty) feedback(it.retired ? "retired" : "ok");
+  else if (n !== 1) toast(`Added ${fmt(n)}: ${it.name}`);
 }
 
 // ---------- teach an unknown barcode ----------
@@ -248,22 +267,63 @@ function teach(code, format, reteach = false) {
   $("teachCode").textContent = bits.join(" · ");
   $("teachLink").hidden = !code.link;
   $("teachSearch").value = "";
+  renderSuppliers();
   renderPick("");
   $("teach").showModal();
+}
+
+// Supplier groups in the teach list: tap a supplier to see only its items. The last supplier
+// picked stays selected, since a shelf usually holds one supplier's products.
+const NO_SUPPLIER = "No supplier";
+const OTHER = "__other";        // suppliers with fewer than SMALL items share one "Other" button
+const SMALL = 3;
+let pickSupplier = "";
+let smallSuppliers = new Set();
+
+function supplierOf(it) { return it.supplier || NO_SUPPLIER; }
+function shortSupplier(name) {
+  return name.replace(/[,.]?\s+(inc|ltd|llc|corp|corporation|limited|co)\.?$/i, "").replace(/\s*\(.*\)$/, "").trim() || name;
+}
+
+function renderSuppliers() {
+  const n = {};
+  for (const it of sheet.items) n[supplierOf(it)] = (n[supplierOf(it)] || 0) + 1;
+  smallSuppliers = new Set(Object.keys(n).filter(s => s !== NO_SUPPLIER && n[s] < SMALL));
+  const names = Object.keys(n).filter(s => !smallSuppliers.has(s))
+    .sort((a, b) => (a === NO_SUPPLIER) - (b === NO_SUPPLIER) || n[b] - n[a] || a.localeCompare(b));
+  const nOther = [...smallSuppliers].reduce((t, s) => t + n[s], 0);
+  if (pickSupplier && pickSupplier !== OTHER && !names.includes(pickSupplier)) pickSupplier = "";
+  if (pickSupplier === OTHER && !nOther) pickSupplier = "";
+  const chip = (value, label, count) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (value === pickSupplier ? " on" : "");
+    b.dataset.supplier = value;
+    b.textContent = label + " ";
+    const c = document.createElement("b");
+    c.textContent = count;
+    b.append(c);
+    return b;
+  };
+  const chips = names.map(s => chip(s, shortSupplier(s), n[s]));
+  if (nOther) chips.splice(chips.length - (n[NO_SUPPLIER] ? 1 : 0), 0, chip(OTHER, "Other", nOther));
+  $("teachSuppliers").replaceChildren(chip("", "All", sheet.items.length), ...chips);
 }
 
 function renderPick(q) {
   const list = $("teachList");
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hits = sheet.items
+    .filter(it => !pickSupplier || (pickSupplier === OTHER ? smallSuppliers.has(supplierOf(it)) : supplierOf(it) === pickSupplier))
     .filter(it => words.every(w => `${it.name} ${it.memo} ${it.sku} ${it.supplier}`.toLowerCase().includes(w)))
     .sort((a, b) => a.retired - b.retired || a.name.localeCompare(b.name));
-  list.replaceChildren(...hits.slice(0, 80).map(it => {
+  list.replaceChildren(...hits.slice(0, pickSupplier ? 300 : 80).map(it => {
     const li = document.createElement("li");
     li.dataset.key = it.key;
     li.innerHTML = `<div><div class="nm"></div><div class="sub"></div></div>`;
     li.querySelector(".nm").textContent = it.name;
-    li.querySelector(".sub").textContent = [it.retired ? "Discontinued" : "", it.sku && `SKU ${it.sku}`, it.memo].filter(Boolean).join(" · ");
+    const showSup = (!pickSupplier || pickSupplier === OTHER) && it.supplier;   // a single-supplier list needn't repeat it
+    li.querySelector(".sub").textContent = [it.retired ? "Discontinued" : "", showSup && shortSupplier(it.supplier), it.sku && `SKU ${it.sku}`, it.memo].filter(Boolean).join(" · ");
     return li;
   }));
   if (!hits.length) list.innerHTML = `<li class="empty">No match</li>`;
@@ -431,6 +491,7 @@ function renderTools() {
   $("who").textContent = state.counter || "";
   $("nameInput").value = state.counter || "";
   $("soundToggle").checked = state.sound !== false;
+  $("askQtyToggle").checked = !!state.askQty;
   $("nCodes").textContent = Object.keys(codes).length;
   $("packInfo").textContent = state.pack ? `Count file: ${state.pack.source || "worksheet"}${state.pack.created ? `, made ${state.pack.created.slice(0, 16).replace("T", " ")}` : ""}. ${sheet.items.length} items.` : "";
   $("ver").textContent = VERSION;
@@ -615,7 +676,9 @@ function ask(title, hint, value, numeric) {
     input.inputMode = numeric ? "decimal" : "text";
     input.type = "text";
     dlg.returnValue = "";
-    dlg.onclose = () => resolve(dlg.returnValue === "ok" ? input.value.trim() : null);
+    // The close event arrives a moment after close(). If the next question has already opened by
+    // then, this late event belongs to the previous one: ignore it.
+    dlg.onclose = () => { if (!dlg.open) resolve(dlg.returnValue === "ok" ? input.value.trim() : null); };
     dlg.showModal();
     if (!input.hidden) setTimeout(() => { input.focus(); input.select(); }, 50);
   });
@@ -692,17 +755,29 @@ document.addEventListener("click", e => {
   }
   const li = e.target.closest("#list li[data-key]");
   if (li) { showCard(byKey.get(li.dataset.key)); $("card").scrollIntoView({ block: "nearest", behavior: "smooth" }); return; }
+  const sup = e.target.closest("#teachSuppliers [data-supplier]");
+  if (sup) {
+    pickSupplier = sup.dataset.supplier;
+    renderSuppliers();
+    renderPick($("teachSearch").value);
+    $("teachList").scrollTop = 0;
+    return;
+  }
   const pick = e.target.closest("#teachList li[data-key]");
   if (pick) pickTaught(pick.dataset.key);
 });
 
 $("search").addEventListener("input", render);
 $("teachSearch").addEventListener("input", e => renderPick(e.target.value));
-$("teach").addEventListener("close", () => { teachCode = null; seen.at = Date.now(); });
+$("teach").addEventListener("close", () => { if (!$("teach").open) teachCode = null; seen.at = Date.now(); });
 $("fileInput").addEventListener("change", e => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) openFiles(fs); });
 $("setupName").addEventListener("change", e => { state.counter = e.target.value.trim(); persist(); });
 $("nameInput").addEventListener("change", e => { state.counter = e.target.value.trim(); persist(); renderTools(); });
 $("soundToggle").addEventListener("change", e => { state.sound = e.target.checked; persist(); });
+$("askQtyToggle").addEventListener("change", e => {
+  state.askQty = e.target.checked; persist();
+  toast(state.askQty ? "Each scan now asks how many." : "Each scan counts 1.");
+});
 $("askInput").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("ask").close("ok"); } });
 document.addEventListener("visibilitychange", () => { if (document.hidden && scanning) stopCamera(); });
 

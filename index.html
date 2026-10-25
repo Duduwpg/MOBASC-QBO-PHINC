@@ -48,6 +48,7 @@
         <button class="btn" id="torchBtn" data-action="torch" hidden>Light</button>
         <button class="btn" data-action="type-code">Type code</button>
       </div>
+      <label class="check"><input type="checkbox" id="askQtyToggle"> Ask how many on each scan (for stacks of the same box)</label>
     </section>
 
     <section id="card" class="card panel" hidden>
@@ -140,6 +141,7 @@
       <p class="hint">Pick the item this barcode belongs to. You only do this once per product.</p>
       <p id="teachCode" class="code"></p>
       <p id="teachLink" class="hint warn" hidden>This code is a web link. One link can cover several sizes or shades of a product, so prefer the regular barcode (UPC/EAN): tap Skip and scan that instead. Use the link only if the product has no readable barcode and comes in one size and shade.</p>
+      <div id="teachSuppliers" class="chips wrap" aria-label="Suppliers"></div>
       <input id="teachSearch" class="search" type="search" placeholder="Search items" autocomplete="off">
       <ul id="teachList" class="list pick"></ul>
       <div class="row">

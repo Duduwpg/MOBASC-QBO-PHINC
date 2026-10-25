@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1d4f4a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="robots" content="noindex">
+  <title>Inventory Count</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="vendor/barcode-detector-ponyfill.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>Inventory Count</h1>
+    <span id="who" class="who"></span>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <!-- Shown until a count file is loaded -->
+  <section id="setup" class="panel" hidden>
+    <h2>Get started</h2>
+    <ol class="steps">
+      <li>Type your name (it goes on your counts).</li>
+      <li>Open the count file you were sent (<code>inv-count-pack-….json</code>).</li>
+    </ol>
+    <label class="field">Your name
+      <input id="setupName" autocomplete="given-name" placeholder="e.g. Anna">
+    </label>
+    <button class="btn primary big" data-action="open-file">Open count file</button>
+    <p class="hint">Everything stays on this phone. Nothing is uploaded.</p>
+  </section>
+
+  <main id="main" hidden>
+    <section class="scanner panel">
+      <div class="video-wrap" id="videoWrap">
+        <video id="video" playsinline muted></video>
+        <div class="aim" aria-hidden="true"></div>
+        <div id="flash" class="flash" aria-hidden="true"></div>
+        <div id="camIdle" class="cam-idle">Camera off</div>
+      </div>
+      <div class="row">
+        <button class="btn primary grow" id="camBtn" data-action="camera">Start scanning</button>
+        <button class="btn" id="torchBtn" data-action="torch" hidden>Light</button>
+        <button class="btn" data-action="type-code">Type code</button>
+      </div>
+    </section>
+
+    <section id="card" class="card panel" hidden>
+      <div id="cardRetired" class="tag danger" hidden>Discontinued: should be 0. Still counted.</div>
+      <div id="cardName" class="card-name"></div>
+      <div id="cardMemo" class="card-memo"></div>
+      <div id="cardHow" class="card-how"></div>
+      <div class="qty-row">
+        <button class="btn qty" data-action="add" data-d="-1">−1</button>
+        <button class="btn qty" data-action="add" data-d="-0.5">−½</button>
+        <div class="qty-box">
+          <div id="cardQty" class="qty-num">–</div>
+          <div class="qty-sub">counted · QBO <span id="cardQoh"></span></div>
+        </div>
+        <button class="btn qty" data-action="add" data-d="0.5">+½</button>
+        <button class="btn qty primary" data-action="add" data-d="1">+1</button>
+      </div>
+      <div class="row">
+        <button class="btn grow" data-action="set">Type a number</button>
+        <button class="btn grow" data-action="zero">Zero</button>
+        <button class="btn" id="syringeBtn" data-action="syringe" hidden>+1 syringe</button>
+      </div>
+      <div id="cardLots" class="card-lots"></div>
+      <div class="row small">
+        <button class="btn link" data-action="undo" id="undoBtn">Undo last</button>
+        <button class="btn link" data-action="reteach" id="reteachBtn" hidden>Wrong item for this barcode?</button>
+        <button class="btn link" data-action="close-card">Close</button>
+      </div>
+    </section>
+
+    <section class="panel list-panel">
+      <input id="search" class="search" type="search" placeholder="Search items" autocomplete="off">
+      <div class="chips" role="tablist">
+        <button class="chip on" data-filter="todo">To count <b id="nTodo"></b></button>
+        <button class="chip" data-filter="done">Counted <b id="nDone"></b></button>
+        <button class="chip" data-filter="retired">Discontinued <b id="nRetired"></b></button>
+        <button class="chip" data-filter="all">All <b id="nAll"></b></button>
+      </div>
+      <div id="retiredHelp" class="hint" hidden>
+        These are discontinued. Look for them anyway. If there are none, tap
+        <button class="btn small-btn" data-action="retired-zero">Mark all not-yet-counted as 0</button>
+      </div>
+      <ul id="list" class="list"></ul>
+    </section>
+
+    <details class="panel tools" id="tools">
+      <summary>Finish, share and settings</summary>
+
+      <h3>1. Send my counts</h3>
+      <p class="hint">Each counter sends their counts file to the person who makes the final sheet.</p>
+      <button class="btn grow" data-action="export-counts">Send my counts file</button>
+
+      <h3>2. Combine and make the QBO sheet</h3>
+      <p class="hint">Open the counts files from the other phones, then make the sheet. Quantities from different people are added together.</p>
+      <div class="row">
+        <button class="btn grow" data-action="open-file">Open counts files</button>
+      </div>
+      <ul id="others" class="others"></ul>
+      <p id="summary" class="summary"></p>
+      <button class="btn primary grow" data-action="export-sheet">Make QBO worksheet (CSV)</button>
+
+      <h3>Barcode list</h3>
+      <p class="hint"><span id="nCodes">0</span> barcodes learned on this phone. Share the list so other phones recognise them too (counts files include it).</p>
+      <div class="row">
+        <button class="btn grow" data-action="export-codes">Send barcode list</button>
+        <button class="btn grow" data-action="open-file">Open barcode list</button>
+      </div>
+
+      <h3>This phone</h3>
+      <label class="field">Your name
+        <input id="nameInput" autocomplete="given-name">
+      </label>
+      <label class="check"><input type="checkbox" id="soundToggle" checked> Beep on scan</label>
+      <p class="hint" id="packInfo"></p>
+      <div class="row">
+        <button class="btn grow" data-action="open-file">Open a different count file</button>
+      </div>
+      <div class="row">
+        <button class="btn danger grow" data-action="clear-counts" id="clearBtn">Clear my counts</button>
+      </div>
+      <p class="hint">Version <span id="ver"></span>. Works offline after the first load.</p>
+    </details>
+  </main>
+
+  <input type="file" id="fileInput" accept=".json,.csv,application/json,text/csv,text/plain" multiple hidden>
+
+  <dialog id="teach">
+    <form method="dialog" class="dlg">
+      <h2 id="teachTitle">New barcode</h2>
+      <p class="hint">Pick the item this barcode belongs to. You only do this once per product.</p>
+      <p id="teachCode" class="code"></p>
+      <p id="teachLink" class="hint warn" hidden>This code is a web link. Some brands print the same link on many products: if another product's code gives this same link, tap Skip and scan its regular barcode instead.</p>
+      <input id="teachSearch" class="search" type="search" placeholder="Search items" autocomplete="off">
+      <ul id="teachList" class="list pick"></ul>
+      <div class="row">
+        <button class="btn grow" value="cancel">Skip this scan</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="ask">
+    <form method="dialog" class="dlg">
+      <h2 id="askTitle"></h2>
+      <p id="askHint" class="hint"></p>
+      <input id="askInput" class="search">
+      <div class="row">
+        <button class="btn grow" value="cancel">Cancel</button>
+        <button class="btn primary grow" value="ok" id="askOk">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

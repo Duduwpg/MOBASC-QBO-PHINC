@@ -4,7 +4,7 @@
 import { readCode } from "./codes.js";
 import { readWorksheet, buildExport, lotText, fmt, round } from "./sheet.js";
 
-const VERSION = "2026-10-26.6";
+const VERSION = "2026-10-28.1";
 const STATE_KEY = "invCount.state.v1";
 const CODES_KEY = "invCount.codes.v1";
 const SAME_CODE_GAP_MS = 1200;   // the same code must leave the view this long to count again
@@ -235,7 +235,7 @@ async function countScan(it, code) {
   const lot = code.lot || code.expiry ? `${code.lot}|${code.expiry}` : "";
   let n = 1;
   if (state.askQty) {
-    feedback(it.retired ? "retired" : "ok");
+    feedback("ok");
     showCard(it, true);
     const so = mine(it.key)?.q;
     const v = await ask(it.name,
@@ -250,7 +250,7 @@ async function countScan(it, code) {
   lastScan = { code, itemKey: it.key };
   showCard(it, true);
   render();
-  if (!state.askQty) feedback(it.retired ? "retired" : "ok");
+  if (!state.askQty) feedback("ok");
   else if (n !== 1) toast(`Added ${fmt(n)}: ${it.name}`);
 }
 
@@ -416,8 +416,7 @@ function showCard(it, fromScan = false) {
   const c = mine(it.key);
   const card = $("card");
   card.hidden = false;
-  card.classList.toggle("retired", it.retired);
-  card.classList.toggle("hit", fromScan && !it.retired);
+  card.classList.toggle("hit", fromScan);
   $("cardRetired").hidden = !it.retired;
   $("cardName").textContent = it.name;
   $("cardMemo").textContent = [it.sku && `SKU ${it.sku}`, it.memo, it.supplier].filter(Boolean).join(" · ");
@@ -455,7 +454,7 @@ function render() {
   for (const it of sheet.items) {
     if (it.retired) n.retired++;
     if (counted(it)) n.done++;
-    else if (!it.retired) n.todo++;
+    else n.todo++;
   }
   $("nTodo").textContent = n.todo;
   $("nDone").textContent = n.done;
@@ -464,7 +463,7 @@ function render() {
   $("retiredHelp").hidden = filter !== "retired";
 
   const show = sheet.items.filter(it => {
-    if (filter === "todo" && (counted(it) || it.retired)) return false;
+    if (filter === "todo" && counted(it)) return false;
     if (filter === "done" && !counted(it)) return false;
     if (filter === "retired" && !it.retired) return false;
     return q.every(w => `${it.name} ${it.memo} ${it.sku} ${it.supplier}`.toLowerCase().includes(w));
@@ -480,7 +479,6 @@ function render() {
     const ct = li.querySelector(".ct");
     ct.textContent = c?.q != null ? fmt(c.q) : "–";
     if (c?.q != null) ct.classList.add("done");
-    else if (it.retired) ct.classList.add("ret");
     return li;
   }));
   if (!show.length) list.innerHTML = `<li class="empty">${filter === "todo" && !q.length ? "Everything is counted." : "Nothing here."}</li>`;
@@ -504,13 +502,11 @@ function renderTools() {
     return li;
   }));
   const t = totals();
-  const active = sheet.items.filter(it => !it.retired);
-  const missing = active.filter(it => !t[it.key]).length;
-  const retiredLeft = sheet.items.filter(it => it.retired && !t[it.key]).length;
+  // Discontinued items are counted like the rest: stock left on the shelf may still be selling.
+  const missing = sheet.items.filter(it => !t[it.key]).length;
   const people = 1 + state.others.length;
   $("summary").textContent = `Combined from ${people} ${people === 1 ? "phone" : "phones"}: ${Object.keys(t).length} items counted. ` +
-    (missing ? `${missing} active items not counted yet. ` : "All active items counted. ") +
-    (retiredLeft ? `${retiredLeft} discontinued items not confirmed.` : "");
+    (missing ? `${missing} items not counted yet.` : "All items counted.");
 }
 
 // ---------- files in and out ----------
@@ -561,10 +557,10 @@ function exportCodes() {
 
 function exportSheet() {
   const t = totals();
-  const missing = sheet.items.filter(it => !it.retired && !t[it.key]).length;
+  const missing = sheet.items.filter(it => !t[it.key]).length;
   const csv = buildExport(sheet, t, stampNow());
   shareOrDownload(`Physical-Inventory-Count-${fileStamp()}.csv`, csv, "text/csv");
-  if (missing) toast(`Made the sheet. ${missing} active items are blank (not counted).`, 5000);
+  if (missing) toast(`Made the sheet. ${missing} items are blank (not counted).`, 5000);
 }
 
 // When two lists disagree about a barcode, the newer teach wins (a re-teach fixes a mistake).
@@ -717,14 +713,6 @@ const actions = {
   undo,
   reteach: () => { if (lastScan) teach(lastScan.code, "", true); },
   "close-card": () => { $("card").hidden = true; current = null; },
-  "retired-zero": () => {
-    let n = 0;
-    for (const it of sheet.items) {
-      if (it.retired && mine(it.key)?.q == null) { state.counts[it.key] = { q: 0, lots: {} }; n++; }
-    }
-    persist(); render();
-    toast(`${n} discontinued items marked 0.`);
-  },
   "export-counts": exportCounts,
   "export-codes": exportCodes,
   "export-sheet": exportSheet,

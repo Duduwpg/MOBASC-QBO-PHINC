@@ -2,7 +2,26 @@
 import { parseCSV, writeCSV } from "./csv.js";
 
 const HEADER_FIRST = "Product/Service";
-const COL = { name: 0, memo: 1, supplier: 2, qoh: 3, count: 4 };
+// Columns are found by header name: QBO adds or drops columns (e.g. Category) depending on the
+// report settings. The positions are the 2026-10-25 layout, used only when a header is missing.
+const HEADERS = {
+  name: ["product/service"], memo: ["memo/description"], supplier: ["preferred supplier name"],
+  qoh: ["quantity on hand"], count: ["physical count"],
+};
+const FALLBACK = { name: 0, memo: 1, supplier: 2, qoh: 3, count: 4 };
+
+function columns(header) {
+  const names = header.map(h => (h || "").trim().toLowerCase());
+  const col = {};
+  for (const [k, labels] of Object.entries(HEADERS)) {
+    const i = names.findIndex(n => labels.includes(n));
+    col[k] = i === -1 ? FALLBACK[k] : i;
+  }
+  if (!names.includes("quantity on hand") || !names.includes("physical count")) {
+    throw new Error("The worksheet has no 'Quantity on hand' or 'Physical Count' column. Export it again from QBO.");
+  }
+  return col;
+}
 
 export function num(v) {
   const n = Number(String(v ?? "").replace(/,/g, "").trim());
@@ -20,11 +39,12 @@ export function fmt(n) {
 }
 
 // text: the worksheet CSV as QBO exported it. helper: the pack's per-row list, or null.
-// Returns {grid, headerIndex, items}; items[i].row is its index in grid.
+// Returns {grid, headerIndex, col, items}; items[i].row is its index in grid, col the column indexes.
 export function readWorksheet(text, helper) {
   const grid = parseCSV(text);
   const headerIndex = grid.findIndex(r => (r[0] || "").trim() === HEADER_FIRST);
   if (headerIndex === -1) throw new Error("This file is not a QBO Physical Inventory Worksheet (no 'Product/Service' header).");
+  const COL = columns(grid[headerIndex]);
   const items = [];
   const seen = {};
   for (let r = headerIndex + 1; r < grid.length; r++) {
@@ -46,10 +66,36 @@ export function readWorksheet(text, helper) {
       box: h?.box || null,
       retired: !!h?.retired,
       hint: h?.hint || "",
+      hand: !!h?.hand,
+      tester: !!h?.tester,
+      retail: h?.retail ? `id:${h.retail}` : "",
     });
   }
   if (!items.length) throw new Error("The worksheet has no item rows.");
-  return { grid, headerIndex, items };
+  return { grid, headerIndex, col: COL, items };
+}
+
+// Staff testers carry the same barcode as the retail product, so a barcode always names the retail
+// item (the count file pairs each tester with its retail item). In tester shelf mode a scan counts
+// the retail item's tester instead.
+export function testerLinks(items) {
+  const byKey = new Map(items.map(it => [it.key, it]));
+  const testerOf = new Map();
+  for (const it of items) if (it.tester && it.retail && byKey.has(it.retail)) testerOf.set(it.retail, it);
+  return { byKey, testerOf };
+}
+
+// The item a scan counts, given the item its barcode names. null: nothing to count (tester shelf
+// mode, and the product has no tester item). A barcode taught to a tester before testers were
+// paired still counts the retail item outside tester shelf mode.
+export function scanTarget(it, testerMode, links) {
+  if (it.tester) return testerMode ? it : links.byKey.get(it.retail) || it;
+  return testerMode ? links.testerOf.get(it.key) || null : it;
+}
+
+// The item a new barcode is saved against: a tester's retail item, if it has one.
+export function codeOwner(it, links) {
+  return (it.tester && links.byKey.get(it.retail)) || it;
 }
 
 // totals: {key: {q, lots: {"lot|expiry": n}, by: {counter: q}}}.
@@ -72,10 +118,10 @@ export function buildExport(sheet, totals, stamp) {
     const row = grid[it.row];
     while (row.length < width) row.push("");
     const counted = t && t.q != null;
-    row[COL.count] = counted ? fmt(t.q) : "";
+    row[sheet.col.count] = counted ? fmt(t.q) : "";
     row.push(
       counted ? fmt(round(t.q - it.qoh)) : "",
-      counted ? lotText(t.lots) : "",
+      counted ? lotText(t.lots) || (it.hand ? "Counted by hand (no barcode)" : "") : "",
       counted ? Object.entries(t.by).map(([who, q]) => `${who} ${fmt(q)}`).join("; ") : "",
     );
   }

@@ -2,9 +2,9 @@
 // Everything stays on the phone (localStorage). Files go in and out by the phone's own
 // file picker and share sheet; nothing is sent to any server.
 import { readCode } from "./codes.js";
-import { readWorksheet, buildExport, lotText, fmt, round } from "./sheet.js";
+import { readWorksheet, buildExport, lotText, fmt, round, testerLinks, scanTarget, codeOwner } from "./sheet.js";
 
-const VERSION = "2026-10-28.1";
+const VERSION = "2026-10-29.1";
 const STATE_KEY = "invCount.state.v1";
 const CODES_KEY = "invCount.codes.v1";
 const SAME_CODE_GAP_MS = 1200;   // the same code must leave the view this long to count again
@@ -28,12 +28,13 @@ function save(key, value) {
 }
 
 const state = Object.assign({
-  counter: "", deviceId: "", sound: true, askQty: false, pack: null, counts: {}, others: [], log: [],
+  counter: "", deviceId: "", sound: true, askQty: false, testerMode: false, pack: null, counts: {}, others: [], log: [],
 }, load(STATE_KEY, {}));
 if (!state.deviceId) state.deviceId = Math.random().toString(36).slice(2, 10);
 let codes = load(CODES_KEY, {});
 let sheet = null;          // parsed worksheet
 let byKey = new Map();     // item key -> item
+let links = testerLinks([]);   // retail item <-> its staff tester
 let current = null;        // item shown on the card
 let lastScan = null;       // {code, itemKey} of the latest scan, for "wrong item"
 let filter = "todo";
@@ -45,6 +46,7 @@ function persistCodes() { save(CODES_KEY, codes); }
 function usePack(pack) {
   sheet = readWorksheet(pack.csv, pack.rows || null);
   byKey = new Map(sheet.items.map(it => [it.key, it]));
+  links = testerLinks(sheet.items);
   state.pack = pack;
 }
 
@@ -226,7 +228,13 @@ function onCode(code, format) {
   const entry = codes[code.key];
   const it = itemFor(entry);
   if (!it) return teach(code, format);
-  countScan(it, code);
+  const target = scanTarget(it, state.testerMode, links);
+  if (!target) {
+    feedback("unknown");
+    return toast(`Tester shelf mode is on, but ${it.name} has no staff tester item. Not counted. ` +
+      "Turn tester shelf mode off to count retail stock.", 6000);
+  }
+  countScan(target, code);
 }
 
 // Normally a scan counts 1. With "Ask how many on each scan" on, it asks for the number of
@@ -261,6 +269,7 @@ function teach(code, format, reteach = false) {
   teachCode = { code, format, reteach };
   feedback("unknown");
   $("teachTitle").textContent = reteach ? "Which item is this barcode?" : "New barcode";
+  $("teachTester").hidden = !state.testerMode;
   const bits = [code.label];
   if (code.lot) bits.push(`lot ${code.lot}`);
   if (code.expiry) bits.push(`exp ${code.expiry}`);
@@ -281,13 +290,16 @@ let pickSupplier = "";
 let smallSuppliers = new Set();
 
 function supplierOf(it) { return it.supplier || NO_SUPPLIER; }
+// In tester shelf mode the teach list shows the tester items only.
+function pickPool() { return state.testerMode ? sheet.items.filter(it => it.tester) : sheet.items; }
 function shortSupplier(name) {
   return name.replace(/[,.]?\s+(inc|ltd|llc|corp|corporation|limited|co)\.?$/i, "").replace(/\s*\(.*\)$/, "").trim() || name;
 }
 
 function renderSuppliers() {
   const n = {};
-  for (const it of sheet.items) n[supplierOf(it)] = (n[supplierOf(it)] || 0) + 1;
+  const pool = pickPool();
+  for (const it of pool) n[supplierOf(it)] = (n[supplierOf(it)] || 0) + 1;
   smallSuppliers = new Set(Object.keys(n).filter(s => s !== NO_SUPPLIER && n[s] < SMALL));
   const names = Object.keys(n).filter(s => !smallSuppliers.has(s))
     .sort((a, b) => (a === NO_SUPPLIER) - (b === NO_SUPPLIER) || n[b] - n[a] || a.localeCompare(b));
@@ -307,13 +319,13 @@ function renderSuppliers() {
   };
   const chips = names.map(s => chip(s, shortSupplier(s), n[s]));
   if (nOther) chips.splice(chips.length - (n[NO_SUPPLIER] ? 1 : 0), 0, chip(OTHER, "Other", nOther));
-  $("teachSuppliers").replaceChildren(chip("", "All", sheet.items.length), ...chips);
+  $("teachSuppliers").replaceChildren(chip("", "All", pool.length), ...chips);
 }
 
 function renderPick(q) {
   const list = $("teachList");
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const hits = sheet.items
+  const hits = pickPool()
     .filter(it => !pickSupplier || (pickSupplier === OTHER ? smallSuppliers.has(supplierOf(it)) : supplierOf(it) === pickSupplier))
     .filter(it => words.every(w => `${it.name} ${it.memo} ${it.sku} ${it.supplier}`.toLowerCase().includes(w)))
     .sort((a, b) => a.retired - b.retired || a.name.localeCompare(b.name));
@@ -336,12 +348,16 @@ function pickTaught(key) {
   if (reteach && lastScan && lastScan.code.key === code.key) {
     undoLastScanOf(lastScan.itemKey);
   }
-  codes[code.key] = { key: it.key, name: it.name, at: new Date().toISOString() };
+  // The barcode is saved against the retail item; the scan counts the item picked (or, in tester
+  // shelf mode, the tester of a retail item picked from a search).
+  const owner = codeOwner(it, links);
+  codes[code.key] = { key: owner.key, name: owner.name, at: new Date().toISOString() };
   persistCodes();
   $("teach").close();
   teachCode = null;
-  countScan(it, code);
-  toast(`Saved: this barcode is ${it.name}`);
+  const target = state.testerMode && !it.tester ? links.testerOf.get(it.key) : it;
+  if (target) countScan(target, code);
+  toast(`Saved: this barcode is ${owner.name}` + (target ? "" : ". It has no staff tester item, so nothing was counted."), target ? 2600 : 6000);
 }
 
 function undoLastScanOf(key) {
@@ -405,6 +421,10 @@ function showBanner() {
 // ---------- card ----------
 // Product-specific hints come in the count file (kept private); box sizes give the generic ones.
 function howToCount(it) {
+  const hand = it.hand ? "No barcode: count by hand. " : "";
+  return hand + boxHint(it);
+}
+function boxHint(it) {
   if (it.hint) return it.hint;
   if (it.box && it.box > 1) return `Count boxes. ${it.box} syringes per box; a loose syringe = ${fmt(1 / it.box)} box.`;
   if (it.box === 1) return "Count boxes. 1 syringe per box.";
@@ -450,15 +470,24 @@ function render() {
   if (!sheet) return;
   const q = $("search").value.toLowerCase().split(/\s+/).filter(Boolean);
   const counted = it => mine(it.key)?.q != null;
-  const n = { todo: 0, done: 0, retired: 0, all: sheet.items.length };
+  const n = { todo: 0, done: 0, hand: 0, handLeft: 0, tester: 0, testerLeft: 0, retired: 0, all: sheet.items.length };
   for (const it of sheet.items) {
     if (it.retired) n.retired++;
+    if (it.hand) { n.hand++; if (!counted(it)) n.handLeft++; }
+    if (it.tester) { n.tester++; if (!counted(it)) n.testerLeft++; }
     if (counted(it)) n.done++;
     else n.todo++;
   }
   $("nTodo").textContent = n.todo;
   $("nDone").textContent = n.done;
   $("nRetired").textContent = n.retired;
+  $("nHand").textContent = n.handLeft ? `${n.handLeft}/${n.hand}` : n.hand;
+  $("handChip").hidden = !n.hand;
+  $("handHelp").hidden = filter !== "hand";
+  $("nTester").textContent = n.testerLeft ? `${n.testerLeft}/${n.tester}` : n.tester;
+  $("testerChip").hidden = !n.tester;
+  $("testerHelp").hidden = filter !== "tester";
+  $("testerRow").hidden = !n.tester;
   $("nAll").textContent = n.all;
   $("retiredHelp").hidden = filter !== "retired";
 
@@ -466,8 +495,12 @@ function render() {
     if (filter === "todo" && counted(it)) return false;
     if (filter === "done" && !counted(it)) return false;
     if (filter === "retired" && !it.retired) return false;
+    if (filter === "hand" && !it.hand) return false;
+    if (filter === "tester" && !it.tester) return false;
     return q.every(w => `${it.name} ${it.memo} ${it.sku} ${it.supplier}`.toLowerCase().includes(w));
   });
+  // By hand and Testers: what is left to count first, grouped by supplier.
+  if (filter === "hand" || filter === "tester") show.sort((a, b) => counted(a) - counted(b) || (a.supplier || "").localeCompare(b.supplier || "") || a.name.localeCompare(b.name));
   const list = $("list");
   list.replaceChildren(...show.map(it => {
     const li = document.createElement("li");
@@ -475,7 +508,7 @@ function render() {
     const c = mine(it.key);
     li.innerHTML = `<div><div class="nm"></div><div class="sub"></div></div><div class="ct"></div>`;
     li.querySelector(".nm").textContent = it.name;
-    li.querySelector(".sub").textContent = [it.retired ? "Discontinued" : "", `QBO ${fmt(it.qoh)}`, it.memo].filter(Boolean).join(" · ");
+    li.querySelector(".sub").textContent = [it.retired ? "Discontinued" : "", it.hand && filter !== "hand" ? "No barcode" : "", `QBO ${fmt(it.qoh)}`, it.memo].filter(Boolean).join(" · ");
     const ct = li.querySelector(".ct");
     ct.textContent = c?.q != null ? fmt(c.q) : "–";
     if (c?.q != null) ct.classList.add("done");
@@ -490,6 +523,7 @@ function renderTools() {
   $("nameInput").value = state.counter || "";
   $("soundToggle").checked = state.sound !== false;
   $("askQtyToggle").checked = !!state.askQty;
+  showTesterMode();
   $("nCodes").textContent = Object.keys(codes).length;
   $("packInfo").textContent = state.pack ? `Count file: ${state.pack.source || "worksheet"}${state.pack.created ? `, made ${state.pack.created.slice(0, 16).replace("T", " ")}` : ""}. ${sheet.items.length} items.` : "";
   $("ver").textContent = VERSION;
@@ -646,7 +680,7 @@ async function startNewCount(pack) {
     if (!ok) return false;
   }
   usePack(pack);
-  state.counts = {}; state.others = []; state.log = [];
+  state.counts = {}; state.others = []; state.log = []; state.testerMode = false;
   current = null; lastScan = null;
   $("card").hidden = true;
   return true;
@@ -713,6 +747,8 @@ const actions = {
   undo,
   reteach: () => { if (lastScan) teach(lastScan.code, "", true); },
   "close-card": () => { $("card").hidden = true; current = null; },
+  "tester-off": () => setTesterMode(false),
+  "tester-on": () => setTesterMode(true),
   "export-counts": exportCounts,
   "export-codes": exportCodes,
   "export-sheet": exportSheet,
@@ -766,6 +802,23 @@ $("askQtyToggle").addEventListener("change", e => {
   state.askQty = e.target.checked; persist();
   toast(state.askQty ? "Each scan now asks how many." : "Each scan counts 1.");
 });
+$("testerToggle").addEventListener("change", e => setTesterMode(e.target.checked));
+
+// Tester shelf mode stays on until turned off (also after a reload), so it shows on the scanner.
+function setTesterMode(on) {
+  state.testerMode = on; persist();
+  showTesterMode();
+  if (on && filter !== "tester") { filter = "tester"; document.querySelectorAll("[data-filter]").forEach(c => c.classList.toggle("on", c.dataset.filter === "tester")); }
+  render();
+  toast(on ? "Tester shelf mode on: each scan counts the staff tester item." : "Tester shelf mode off: scans count retail stock.", 4000);
+}
+function showTesterMode() {
+  const on = !!state.testerMode;
+  $("testerToggle").checked = on;
+  $("testerBar").hidden = !on;
+  $("videoWrap").classList.toggle("tester", on);
+}
+
 $("askInput").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("ask").close("ok"); } });
 document.addEventListener("visibilitychange", () => { if (document.hidden && scanning) stopCamera(); });
 

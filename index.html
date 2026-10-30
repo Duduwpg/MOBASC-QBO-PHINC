@@ -37,6 +37,10 @@
 
   <main id="main" hidden>
     <section class="scanner panel">
+      <div id="testerBar" class="tester-bar" hidden>
+        <span><b>Tester shelf mode</b>: each scan counts the staff tester item, not retail stock.</span>
+        <button class="btn" data-action="tester-off">Turn off</button>
+      </div>
       <div class="video-wrap" id="videoWrap">
         <video id="video" playsinline muted></video>
         <div class="aim" aria-hidden="true"></div>
@@ -49,6 +53,7 @@
         <button class="btn" data-action="type-code">Type code</button>
       </div>
       <label class="check"><input type="checkbox" id="askQtyToggle"> Ask how many on each scan (for stacks of the same box)</label>
+      <label class="check" id="testerRow" hidden><input type="checkbox" id="testerToggle"> Tester shelf mode (testers have the same barcode as retail)</label>
     </section>
 
     <section id="card" class="card panel" hidden>
@@ -84,12 +89,24 @@
       <div class="chips" role="tablist">
         <button class="chip on" data-filter="todo">To count <b id="nTodo"></b></button>
         <button class="chip" data-filter="done">Counted <b id="nDone"></b></button>
+        <button class="chip" data-filter="hand" id="handChip" hidden>By hand <b id="nHand"></b></button>
+        <button class="chip" data-filter="tester" id="testerChip" hidden>Testers <b id="nTester"></b></button>
         <button class="chip" data-filter="retired">Discontinued <b id="nRetired"></b></button>
         <button class="chip" data-filter="all">All <b id="nAll"></b></button>
       </div>
       <div id="retiredHelp" class="hint" hidden>
         Discontinued by the supplier, but some may still be on the shelf and selling.
         Count them like any other item; leave one blank only if you have not looked for it yet.
+      </div>
+      <div id="handHelp" class="hint" hidden>
+        These products have no barcode to scan. Tap each one, count what is on the shelf, and enter it
+        with +1 or "Type a number". It goes into the same QBO sheet as the scanned items.
+      </div>
+      <div id="testerHelp" class="hint" hidden>
+        Staff testers have the same barcode as the retail product. At the tester shelf, turn on
+        tester shelf mode and scan each tester: it counts the staff tester item. Turn it off before
+        counting retail stock again.
+        <button class="btn" data-action="tester-on">Turn on tester shelf mode</button>
       </div>
       <ul id="list" class="list"></ul>
     </section>
@@ -140,6 +157,7 @@
       <h2 id="teachTitle">New barcode</h2>
       <p class="hint">Pick the item this barcode belongs to. You only do this once per product.</p>
       <p id="teachCode" class="code"></p>
+      <p id="teachTester" class="hint warn" hidden>Tester shelf mode: pick the staff tester item. The barcode is saved for the retail product too.</p>
       <p id="teachLink" class="hint warn" hidden>This code is a web link. One link can cover several sizes or shades of a product, so prefer the regular barcode (UPC/EAN): tap Skip and scan that instead. Use the link only if the product has no readable barcode and comes in one size and shade.</p>
       <div id="teachSuppliers" class="chips wrap" aria-label="Suppliers"></div>
       <input id="teachSearch" class="search" type="search" placeholder="Search items" autocomplete="off">

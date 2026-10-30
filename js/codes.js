@@ -113,6 +113,13 @@ export function gs1Date(yymmdd) {
   return dd === "00" ? `${yyyy}-${mm}` : `${yyyy}-${mm}-${dd}`;
 }
 
+// Some makers print a non-GS1 2D code "LOT;YYYY.MM;YYYY.MM;REF" (lot; made; expiry; catalogue
+// number). The REF names the product, so it is the key; lot and expiry change box to box.
+export function parseLotRef(text) {
+  const m = /^([A-Za-z0-9-]+);(\d{4})\.(0[1-9]|1[0-2]);(\d{4})\.(0[1-9]|1[0-2]);([A-Za-z0-9-]+)$/.exec(String(text || "").trim());
+  return m ? { lot: m[1], made: `${m[2]}-${m[3]}`, expiry: `${m[4]}-${m[5]}`, ref: m[6].toUpperCase() } : null;
+}
+
 // format: BarcodeDetector format name; text: rawValue.
 // Returns {key, gtin, lot, expiry, label, gs1, link}; link = a web link with no GTIN in it.
 export function readCode(format, text) {
@@ -131,12 +138,13 @@ export function readCode(format, text) {
     else if (gs1 && !("01" in gs1)) gs1 = null;
   }
   if (gtin && !gtinCheckOk(gtin)) gtin = "";
+  const lr = gtin ? null : parseLotRef(raw);
 
-  const lot = gs1?.["10"] || "";
-  const expiry = gs1Date(gs1?.["17"]);
+  const lot = gs1?.["10"] || lr?.lot || "";
+  const expiry = gs1Date(gs1?.["17"]) || lr?.expiry || "";
   const clean = raw.replace(/[\u0000-\u001f]/g, " ").trim();
-  const key = gtin ? `gtin:${gtin}` : `raw:${clean}`;
-  const label = gtin ? `GTIN ${gtin.replace(/^0+(?=\d{12,})/, "")}` : clean;
+  const key = gtin ? `gtin:${gtin}` : lr ? `ref:${lr.ref}` : `raw:${clean}`;
+  const label = gtin ? `GTIN ${gtin.replace(/^0+(?=\d{12,})/, "")}` : lr ? `REF ${lr.ref}` : clean;
   const link = !gtin && /^https?:\/\//i.test(clean);
   return { key, gtin, lot, expiry, label, gs1, link };
 }

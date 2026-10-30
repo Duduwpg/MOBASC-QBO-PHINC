@@ -138,3 +138,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); }
 
 .toast { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 20; background: #222; color: #fff; padding: 12px 14px; border-radius: 12px; font-size: 15px; opacity: 0; transform: translateY(10px); transition: opacity .2s, transform .2s; pointer-events: none; text-align: center; }
 .toast.show { opacity: .95; transform: none; }
+.tester-bar { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 8px; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--warn); font-size: 14px; }
+.video-wrap.tester { outline: 4px solid var(--warn); outline-offset: -4px; }
+#testerHelp .btn { display: block; margin-top: 8px; }
